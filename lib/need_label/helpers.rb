@@ -11,20 +11,27 @@ module ActionView
           content_or_options = nil if content_or_options == {}
         end
         need = false if options.class == Hash && options[:need_label] == false
+
+        return_validator = proc do |v, obj|
+          is_nil      = -> (o) { o.nil? }
+          is_proc     = -> (o) { o.is_a?(Proc) }
+          is_symbolic = -> (o) { o.is_a?(String) || o.is_a?(Symbol) }
+
+          case v.options[:if]
+          when is_nil
+            v
+          when is_proc
+            v if obj.instance_eval(&v.options[:if])
+          when is_symbolic
+            v if obj.instance_eval(&eval("proc{#{v.options[:if]}}"))
+          end
+        end
+
         if need && object.present? && object.class.respond_to?(:validators)
           need_attributes = []
           object.class.validators.each do |validator|
-            if validator.is_a? ActiveModel::Validations::PresenceValidator
-              if validator.options[:if].nil?
-                need_attributes << validator
-              else
-                if validator.options[:if].is_a? Proc
-                  need_attributes << validator if object.instance_eval(&validator.options[:if])
-                elsif (validator.options[:if].is_a? String) || (validator.options[:if].is_a? Symbol)
-                  need_attributes << validator if object.instance_eval(&eval("proc{#{validator.options[:if]}}"))
-                end
-              end
-            end
+            next unless validator.is_a?(ActiveModel::Validations::PresenceValidator)
+            need_attributes.push(return_validator.call(validator, object))
           end
           need_attributes.map!{|e| e.attributes[0]}
           if need_attributes.index(method.to_sym)
